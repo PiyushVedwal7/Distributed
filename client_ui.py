@@ -4,7 +4,14 @@ from tkinter import filedialog, messagebox, ttk
 import os
 import threading
 
-selected_file = None
+# Server details
+SERVER1_IP = "192.168.55.100"
+SERVER2_IP = "192.168.55.195"
+SERVER1_PORT = 8082
+SERVER2_PORT = 8084
+
+selected_file = None  # Store selected file
+server_counter = 0  # Counter for round-robin load balancing
 
 def select_file():
     global selected_file
@@ -15,27 +22,26 @@ def select_file():
         file_label.config(text=f"Selected: {file_name} ({file_size:.2f} KB)", foreground="green")
 
 def split_and_send():
-    global selected_file
+    global selected_file, server_counter
     if not selected_file:
         messagebox.showerror("Error", "No file selected.")
         return
     
+    # Start the file processing in a separate thread
+    threading.Thread(target=process_and_send_file).start()
+#load balancing perofrmed here
+def process_and_send_file():
+    global selected_file, server_counter
     try:
         status_label.config(text="Reading file...", foreground="blue")
-        progress_bar.start()
         root.update_idletasks()
-
-        server1_ip = server1_ip_entry.get()
-        server1_port = int(server1_port_entry.get())
-        server2_ip = server2_ip_entry.get()
-        server2_port = int(server2_port_entry.get())
 
         with open(selected_file, "rb") as file:
             data = file.read()
 
         split_ratio = split_slider.get() / 100
         split_index = int(len(data) * split_ratio)
-        
+
         part1 = data[:split_index]
         part2 = data[split_index:]
 
@@ -47,9 +53,22 @@ def split_and_send():
             f2.write(part2)
 
         status_label.config(text="Sending files to servers...", foreground="blue")
-        
-        threading.Thread(target=send_to_server, args=(part1_path, server1_ip, server1_port)).start()
-        threading.Thread(target=send_to_server, args=(part2_path, server2_ip, server2_port)).start()
+        progress_bar.start()
+        root.update_idletasks()
+
+        # Round-robin load balancing
+        if server_counter % 2 == 0:
+            send_to_server(part1_path, SERVER1_IP, SERVER1_PORT)
+            send_to_server(part2_path, SERVER2_IP, SERVER2_PORT)
+        else:
+            send_to_server(part1_path, SERVER2_IP, SERVER2_PORT)
+            send_to_server(part2_path, SERVER1_IP, SERVER1_PORT)
+
+        server_counter += 1  # Increment the counter for next round
+
+        status_label.config(text="File successfully sent to both servers!", foreground="green")
+        progress_bar.stop()
+        messagebox.showinfo("Success", "File split and sent successfully.")
 
     except Exception as e:
         progress_bar.stop()
@@ -58,53 +77,39 @@ def split_and_send():
 
 def send_to_server(file_path, server_ip, port):
     try:
+        threading.Thread(target=send_file, args=(file_path, server_ip, port)).start()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to send file to {server_ip}:{port} - {e}")
+
+def send_file(file_path, server_ip, port):
+    try:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect((server_ip, port))
 
         with open(file_path, "rb") as file:
             client_socket.sendall(file.read())
-        
+
         client_socket.close()
-        status_label.config(text=f"File sent to {server_ip}:{port}", foreground="green")
-        progress_bar.stop()
     except Exception as e:
         messagebox.showerror("Error", f"Failed to send file to {server_ip}:{port} - {e}")
-        status_label.config(text="Error in file transfer", foreground="red")
 
 # UI Setup
 root = tk.Tk()
-root.title("Secure File Splitter")
-root.geometry("600x500")
-root.configure(bg="#2E2E2E")
+root.title("Advanced File Splitter with Load Balancing")
+root.geometry("550x450")
+root.configure(bg="#1E1E1E")  # Dark mode background
 
 style = ttk.Style()
-style.configure("TButton", font=("Arial", 12), padding=10, background="#3498db", foreground="white")
-style.configure("TLabel", font=("Arial", 11, "bold"), background="#2E2E2E", foreground="white")
-style.configure("TFrame", background="#2E2E2E")
+style.configure("TButton", font=("Arial", 12), padding=10)
+style.configure("TLabel", font=("Arial", 11, "bold"), background="#1E1E1E", foreground="white")
+style.configure("TFrame", background="#1E1E1E")
 
 frame = ttk.Frame(root, padding=20)
 frame.pack(expand=True, fill="both")
 
-title_label = ttk.Label(frame, text="Secure File Splitter", font=("Arial", 16, "bold"))
+title_label = ttk.Label(frame, text="Advanced File Splitter with Load Balancing", font=("Arial", 16, "bold"))
 title_label.pack(pady=10)
-
-# Server IP & Port Inputs
-server_frame = ttk.Frame(frame)
-server_frame.pack(pady=5)
-
-ttk.Label(server_frame, text="Server 1 IP:").grid(row=0, column=0, padx=5, pady=2)
-server1_ip_entry = ttk.Entry(server_frame, width=15)
-server1_ip_entry.grid(row=0, column=1, padx=5)
-ttk.Label(server_frame, text="Port:").grid(row=0, column=2, padx=5)
-server1_port_entry = ttk.Entry(server_frame, width=5)
-server1_port_entry.grid(row=0, column=3, padx=5)
-
-ttk.Label(server_frame, text="Server 2 IP:").grid(row=1, column=0, padx=5, pady=2)
-server2_ip_entry = ttk.Entry(server_frame, width=15)
-server2_ip_entry.grid(row=1, column=1, padx=5)
-ttk.Label(server_frame, text="Port:").grid(row=1, column=2, padx=5)
-server2_port_entry = ttk.Entry(server_frame, width=5)
-server2_port_entry.grid(row=1, column=3, padx=5)
 
 # File Selection
 select_button = ttk.Button(frame, text="Select File", command=select_file)
